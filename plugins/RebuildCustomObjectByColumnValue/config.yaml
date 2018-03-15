@@ -1,0 +1,79 @@
+name: RebuildCustomObjectByColumnValue
+id:   RebuildCustomObjectByColumnValue
+key:  rebuildcustomobjectbycolumnvalue
+version: 0.01
+description: Rebuild CustomObject archive by CustomObject's column value.
+tags:
+    function:
+        RebuildCustomObjectByColumnValue: >
+                sub {
+                        my ( $ctx, $args, $cond ) = @_;
+                        my $app = MT->instance;
+                        my $blog_id = $args->{ blog_id };
+                        if ( ref( $app ) =~ /^MT::App/ ) {
+                            return if ( $app->mode =~ /preview/ );
+                            if (! $blog_id ) {
+                                $blog_id = $app->blog->id
+                                  or return '';
+                            }
+                        } else {
+                            my $current_blog = $ctx->stash( 'blog' );
+                            if (! $blog_id ) {
+                                $blog_id = $current_blog->id
+                                  or return'';
+                            }
+                        }
+                        if ( $blog_id eq 'all' ) {
+                            $blog_id = undef;
+                        }
+                        my $column = $args->{ column } || 'name';
+                        my $class = $args->{ class } || 'customobject';
+                        my $eq = $args->{ eq };
+                        return '' unless $eq;
+                        require CustomObject::CustomObject;
+                        my $params;
+                        $params->{ blog_id } = $blog_id if $blog_id;
+                        $params->{ class } = $class;
+                        $params->{ $column } = $eq;
+                        $params->{ status } = CustomObject::CustomObject::RELEASE();
+
+                        my $args = {};
+                        if ( $column =~ /^field\./ ) {
+                            my $target_class = MT->model( $class );
+                            my $meta_class = $target_class->meta_pkg;
+                            my $meta_pk = $meta_class->primary_key_tuple->[ 0 ];
+                            my $meta_id_cond = '= ' . $meta_pk;
+                            my $meta_rec = MT::Meta->metadata_by_name( $target_class, $column );
+                            my $meta_col = $meta_rec->{ type };
+                            $args->{ 'join' } = 
+                                $meta_class->join_on(
+                                                undef,
+                                                {
+                                                    $meta_pk => \$meta_id_cond,
+                                                    type => $column,
+                                                    $meta_col => $eq,
+                                                },
+                                            ),
+                            delete $params->{ $column };
+                        }
+                        my @customobjects = CustomObject::CustomObject->load( $params, $args );
+
+                        my $params2;
+                        $params2->{ blog_id } = $blog_id if $blog_id;
+                        $params2->{ archive_type } = $class;
+                        require MT::WeblogPublisher;
+                        for my $customobject ( @customobjects ) {
+                            my @fis = mt->model( 'fileinfo' )->load( $params2 );
+                            my $pub = MT::WeblogPublisher->new;
+                            if ( @fis ) {
+                                for my $fi ( @fis ) {
+                                    my $res = $pub->rebuild_from_fileinfo( $fi );
+                                }
+                            }
+                            return '';
+                        }
+                        return '';
+                        #MT->instance->request( '__cached_maps', {} );
+                        #MT->instance->request( '__published:' . $entry->blog_id, {} );
+                    }
+
